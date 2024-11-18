@@ -2,49 +2,53 @@ import numpy as np
 from random import gauss
 
 from el_structure import do_GS_calc, do_ES_calc
-from read_input import get_GEOM
+from read_input import get_GEOM, get_VELOC
 
 class Molecule():
     def __init__(self, mol_number=None):
         
         # For handling many-molecule simulations
-        assert(mol_number is not None and mol_number >= 0), "mol_number must be a positive integer" # Check if mol_number is valid
         self.mol_number = mol_number
         
         # Electronic Structure Variables
         self.basis_set        = "sto3g"
         self.n_ES_states      = 2
-        self.ES_type          = 'SD' # 'TDA'
+        self.ES_type          = 'TDA' # 'TDA' -- Tamm-Dancoff Approx. or 'RPA' -- Random Phase Approx. or 'SD' -- Slater Determinant
         self.do_TDA_gradients = False 
-        self.xc               = None # "pbe,pbe" -- None means to do HF
+        self.xc               = None # "" -- Do LDA, 'MINDO3' -- Do semi-empirical MINDO3, "PBE0" -- Do PBE1PBE/PBE0 "pbe,pbe" -- Do PBE, None -- do HF
 
         # Initialize the molecule
         self.__build()
 
     def __build(self):
         get_GEOM(self)
+        get_VELOC(self)
         do_GS_calc(self)
         do_ES_calc(self)
     
     def propagate_nuclear_R(self, params, dt=None):
-        #if ( hasattr( self, "F_NEW" ) ):
-        #    self.F_OLD    = self.F_NEW * 1.0
         self.F_NEW    = -1 * self.GS_GRADIENT
-        
         if ( params.do_Langevin == True ):
             self.do_Langevin_XStep(params, dt)
         else:
             self.R       += self.V * dt + 0.5 * dt**2 * self.F_NEW / self.masses[:,None]
 
     def propagate_nuclear_V(self, params, dt=None):
-        if ( not hasattr( self, "F_OLD" ) ):
-            self.F_OLD = self.F_NEW * 1.0
-        self.F_NEW    = -1 * self.GS_GRADIENT
+        self.F_OLD = self.F_NEW * 1.0
+        self.F_NEW = -1 * self.GS_GRADIENT
+
+        # Check if F_NEW or F_OLD is zero
+        if ( np.all( self.F_NEW == 0 ) or np.all( self.F_OLD == 0 ) ):
+            print("F_NEW or F_OLD is zero. Exiting.")
+            exit()
+
+        if ( params.step == 1 and params.do_MB_dist == True ):
+            self.MaxwellBoltzmann(params)
 
         if ( params.do_Langevin == True ):
             self.do_Langevin_VStep(params, dt)
         else:
-            self.V       += 0.5 * dt * (self.F_OLD + self.F_NEW) / self.masses[:,None]
+            self.V += 0.5 * dt * (self.F_OLD + self.F_NEW) / self.masses[:,None]
     
         if ( params.doRescale ):
             if ( params.step % params.rescale_freq == 0 or params.step == 0 or params.step == 1 ):
@@ -52,14 +56,28 @@ class Molecule():
     
     def rescale_V(self, params):
         KE = 0.5000 * np.einsum("R,Rd,Rd->", self.masses, self.V, self.V )
-        T  = (2/3) * KE / self.natoms * (300 / 0.025) # eV --> K
-        print( "KE, T",  KE, T )
+        T  = (2/3) * KE / self.natoms * (300 / 0.025 * 27.2114) # a.u. --> K
+        print( "Before: T = %1.4f" %  T )
         if ( KE > 1e-6 ):
             self.V *= np.sqrt( params.temperature / T )
         else:
-            print("KE too small to rescale V")
+            print("KE too small to rescale V. Sampling MB distribution.")
             # Sample Boltzmann distribution at temperature params.temperature
-            self.V = np.array([gauss(0,params.temperature * (0.025 / 300 / 27.2114)) for dof in range(3*self.natoms)], dtype=float).reshape((self.natoms,3)) # Gaussian random number
+            self.MaxwellBoltzmann(params)
+        
+        # Check final temperature
+        KE = 0.5000 * np.einsum("R,Rd,Rd->", self.masses, self.V, self.V )
+        T  = (2/3) * KE / self.natoms * (300 / 0.025 * 27.2114) # eV --> K
+        print( "After: T = %1.4f" % T )
+
+    def MaxwellBoltzmann(self,params):
+        KbT  = params.temperature * (0.025 / 300) / 27.2114 # K -> KT (a.u.)
+
+        for at in range(self.natoms):
+            alpha = self.masses[at] / KbT
+            sigma = np.sqrt(1 / alpha)
+            self.V[at,:] = np.array([gauss(0,sigma) for dof in range(3)], dtype=float)
+        
 
     def do_el_structure(self):
         do_GS_calc(self)
@@ -76,14 +94,14 @@ class Molecule():
         """
         TEMP  = params.temperature * (0.025 / 300) / 27.2114 # K -> KT (a.u.)
 
-        self.langevin_epsilon = np.array([gauss(0,1) for dof in range(3*self.natoms)], dtype=float).reshape((self.natoms,3)) # Gaussian random number
-        self.langevin_theta   = np.array([gauss(0,1) for dof in range(3*self.natoms)], dtype=float).reshape((self.natoms,3)) # Gaussian random number
+        self.langevin_RAND1 = np.array([gauss(0,1) for dof in range(3*self.natoms)], dtype=float).reshape((self.natoms,3)) # Gaussian random number
+        self.langevin_RAND2   = np.array([gauss(0,1) for dof in range(3*self.natoms)], dtype=float).reshape((self.natoms,3)) # Gaussian random number
 
         # Difference in acceleration and damped velocity
         a_ORIG = self.F_NEW / self.masses[:,None]  # Original acceleration
-        a_DAMP = params.langevin_lambda * self.V # Acceleration due to damping
-        SIGMA = np.sqrt(2 * TEMP * params.langevin_lambda / self.masses[:,None]) # Gaussian Width
-        RANDOM_FAC = 0.5 * self.langevin_epsilon + 1/(2*np.sqrt(3)) * self.langevin_theta
+        a_DAMP = params.langevin_lambda/1000/27.2114 * self.V # Acceleration due to damping
+        SIGMA = np.sqrt(2 * TEMP * params.langevin_lambda/1000/27.2114 / self.masses[:,None]) # Gaussian Width
+        RANDOM_FAC = 0.5 * self.langevin_RAND1 + 1/(2*np.sqrt(3)) * self.langevin_RAND2
 
         # A(t) has units of position
         # Store this for VStep
@@ -97,8 +115,9 @@ class Molecule():
         """
         TEMP  = params.temperature * (0.025 / 300) / 27.2114 # K -> KT (a.u.) # TODO Change units in read_input.py
 
-        SIGMA = np.sqrt(2 * TEMP * params.langevin_lambda / self.masses[:,None]) # Gaussian Width
+        SIGMA = np.sqrt(2 * TEMP * params.langevin_lambda/1000/27.2114 / self.masses[:,None]) # Gaussian Width
 
-        self.V += 0.5000000 * dt * ( self.F_OLD + self.F_NEW ) / self.masses[:,None] - \
-                  dt * params.langevin_lambda  * self.V + SIGMA * np.sqrt(dt) * self.V - \
-                  params.langevin_lambda * self.langevin_A
+        self.V += 0.5000000 * dt * ( self.F_OLD + self.F_NEW ) / self.masses[:,None] \
+                    - dt * params.langevin_lambda/1000/27.2114  * self.V \
+                    + SIGMA * np.sqrt(dt) * self.langevin_RAND1 \
+                    - params.langevin_lambda/1000/27.2114 * self.langevin_A

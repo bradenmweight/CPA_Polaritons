@@ -3,7 +3,6 @@ import numpy as np
 def get_GEOM(self):
     lines   = open("input_geometry.xyz", "r").readlines()
     natoms  = int(lines[0])
-    comment = lines[1]
     LABELS  = []
     R    = np.zeros((natoms, 3))
     start_line = 2 + self.mol_number*(natoms+2)
@@ -18,11 +17,31 @@ def get_GEOM(self):
     
     self.LABELS = LABELS
     self.R   = R / 0.529 # Angstroms --> a.u.
-    self.V   = np.zeros_like(self.R)
     self.natoms = natoms
 
     self.masses = set_masses( self.LABELS )
 
+def get_VELOC(self):
+    self.V   = np.zeros_like(self.R)
+    try:
+        lines   = open("input_velocity.xyz", "r").readlines()
+    except:
+        print("Doing Maxwell-Boltzmann Velocity Distribution")
+        MaxwellBoltzmann(self)
+    start_line = 2 + self.mol_number*(self.natoms+2)
+    if ( len(lines) < start_line + self.natoms ):
+        start_line = 2
+    for at in range(self.natoms):
+        line = lines[start_line + at].split()
+        self.V[at,:] = np.array( line[1:] )
+    self.V /= 0.529 * 41.341 # Ang/fs --> a.u.
+
+    def MaxwellBoltzmann(self):
+        KbT  = 300 * (0.025 / 300) / 27.2114 # K -> KT (a.u.)
+        for at in range(self.natoms):
+            alpha = self.masses[at] / KbT
+            sigma = np.sqrt(1 / alpha)
+            self.V[at,:] = np.array([gauss(0,sigma) for dof in range(3)], dtype=float)
 
 def set_masses(LABELS):
     mass_amu_to_au = 1837/1.007 # au / amu
