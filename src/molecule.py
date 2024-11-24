@@ -11,11 +11,11 @@ class Molecule():
         self.mol_number = mol_number
         
         # Electronic Structure Variables
-        self.basis_set        = "sto3g"
-        self.n_ES_states      = 2
+        self.basis_set        = "sto5g"
+        self.n_ES_states      = 1
         self.ES_type          = 'TDA' # 'TDA' -- Tamm-Dancoff Approx. or 'RPA' -- Random Phase Approx. or 'SD' -- Slater Determinant
         self.do_TDA_gradients = False 
-        self.xc               = None # "" -- Do LDA, 'MINDO3' -- Do semi-empirical MINDO3, "PBE0" -- Do PBE1PBE/PBE0 "pbe,pbe" -- Do PBE, None -- do HF
+        self.xc               = "PBE" # "" -- Do LDA, 'MINDO3' -- Do semi-empirical MINDO3, "PBE0" -- Do PBE1PBE/PBE0 "pbe,pbe" -- Do PBE, None -- do HF
 
         # Initialize the molecule
         self.__build()
@@ -23,8 +23,8 @@ class Molecule():
     def __build(self):
         get_GEOM(self)
         get_VELOC(self)
-        do_GS_calc(self)
-        do_ES_calc(self)
+        #do_GS_calc(self)
+        #do_ES_calc(self)
     
     def propagate_nuclear_R(self, params, dt=None):
         self.F_NEW    = -1 * self.GS_GRADIENT
@@ -80,6 +80,7 @@ class Molecule():
         
 
     def do_el_structure(self):
+        print("Doing Electronic Structure Calculations for Molecule %d" % self.mol_number)
         do_GS_calc(self)
         do_ES_calc(self)
 

@@ -1,5 +1,9 @@
 import numpy as np
 
+# # Parameters for spectra
+EGRID = np.linspace(1,10,5000) / 27.2114 # a.u.
+SIG   = 0.001 / 27.2114 # a.u.
+
 def save_data(collective, cavity, myQM):
     save_XYZ(collective)
     save_energy(collective,cavity)
@@ -39,8 +43,6 @@ def save_transmission_spectrum(collective, cavity):
         cavity_start_ind = NPOL_STATES - cavity.num_modes
         PHOT_CHAR[P] = np.sum( np.abs(cavity.polariton_wavefunctions[cavity_start_ind:,P])**2 )
 
-    EGRID = np.linspace(0,1,10000) # a.u.
-    SIG   = 0.001/27.2114 # a.u.
     ABS_G = np.zeros( (len(EGRID)) )
     ABS_L = np.zeros( (len(EGRID)) )
     for pt in range( len(EGRID) ):
@@ -62,8 +64,6 @@ def save_molecular_absorption_spectra(collective):
         osc_str[moli,:] = (2/3) * E0j * np.einsum("sd,sd->s", mu0j, mu0j)
     np.save("%s/molecular_oscillator_strengths__step_%d.dat" % (collective.output_dir, collective.step), osc_str) # (NMOL, NSTATES)
     
-    EGRID = np.linspace(0,1,10000) # a.u.
-    SIG   = 0.001/27.2114 # a.u.
     ABS_G = np.zeros( (len(EGRID)) )
     ABS_L = np.zeros( (len(EGRID)) )
     for pt in range( len(EGRID) ):
@@ -105,8 +105,6 @@ def save_cavity_molecular_absorption_spectra(collective,cavity):
     #     osc_str[moli,:] = (2/3) * E0j * np.einsum("sd,sd->s", mu0j, mu0j)
     # np.save("%s/molecular_oscillator_strengths__step_%d.dat" % (collective.output_dir, collective.step), osc_str) # (NMOL, NSTATES)
     
-    # EGRID = np.linspace(0,1,10000) # a.u.
-    # SIG   = 0.001/27.2114 # a.u.
     # ABS_G = np.zeros( (len(EGRID)) )
     # ABS_L = np.zeros( (len(EGRID)) )
     # for pt in range( len(EGRID) ):
@@ -153,9 +151,6 @@ def save_XYZ(collective):
 
 def save_energy(collective, cavity):
     # Append energies of all molecules to energy_mol.dat
-    E_GS = 0.0
-    for molecule in collective.molecules:
-        E_GS += molecule.GS_ENERGY
     with open("%s/energy_mol.dat" % collective.output_dir, "a") as f:
         f.write("%1.4f" % (collective.step * collective.time_step / 41.341))
         for molecule in collective.molecules:
@@ -163,12 +158,24 @@ def save_energy(collective, cavity):
                 f.write(" %1.8f" % (molecule.adiabatic_energy[state]) )
         f.write("\n")
     
+    if ( collective.step == 0 ):
+        coupling = np.einsum("md,m->md", cavity.cavity_polarization, cavity.cavity_coupling)
+        with open("%s/cavity_angles_frequencies_couplings.dat" % collective.output_dir, "a") as f:
+            for mode in range(cavity.num_modes):
+                f.write("%1.5f\t%1.5f\t%1.5f\t%1.5f\t%1.5f\t" % (cavity.Theta[mode], cavity.cavity_freq[mode], coupling[mode,0], coupling[mode,1], coupling[mode,2]) )
+                f.write("\n")
+
     # Append polariton energies to energy_polariton.dat
     with open("%s/energy_polariton.dat" % collective.output_dir, "a") as f:
         f.write("%1.4f" % (collective.step * collective.time_step / 41.341))
         for energy in cavity.polariton_energy:
             f.write(" %1.8f" % energy)
         f.write("\n")
+
+    # Save the light-matter Hamiltonian
+    np.save("%s/hamiltonian__step_%d.npy" % (collective.output_dir,collective.step), cavity.H_cavity)
+
+
 
 def save_dipole_matrix(collective,cavity):
     # Save the dipole matrix as a .npy file for each time-step
